@@ -70,6 +70,8 @@ private:
     QPointF m_pressPosition;
     // Name of the KWin script managing this pin, empty if there is none
     QString m_kwinScriptName;
+    // File the KWin script was loaded from, removed with the script
+    QString m_kwinScriptPath;
     // The KWin script is dragging the pin
     bool m_kwinMoving{ false };
 

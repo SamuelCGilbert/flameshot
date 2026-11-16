@@ -393,21 +393,28 @@ void PinWidget::placeWithKWin()
                                      QStringLiteral("loadScript"));
     load << path << pluginName;
     QDBusReply<int> id = bus.call(load);
-    if (id.isValid() && id.value() >= 0) {
-        bus.call(QDBusMessage::createMethodCall(
-          QStringLiteral("org.kde.KWin"),
-          QStringLiteral("/Scripting/Script%1").arg(id.value()),
-          QStringLiteral("org.kde.kwin.Script"),
-          QStringLiteral("run")));
-        m_kwinScriptName = pluginName;
-        connect(qApp,
-                &QCoreApplication::aboutToQuit,
-                this,
-                &PinWidget::unloadKWinScript);
+    if (!id.isValid() || id.value() < 0) {
+        QFile::remove(path);
+        return;
     }
+    m_kwinScriptName = pluginName;
+    m_kwinScriptPath = path;
+    connect(qApp,
+            &QCoreApplication::aboutToQuit,
+            this,
+            &PinWidget::unloadKWinScript);
 
-    // KWin reads the file in the background after the call to run
-    QTimer::singleShot(5000, [path]() { QFile::remove(path); });
+    // Don't call run on /Scripting/Script<id>. KWin numbers a script by the
+    // number of scripts loaded, so once one was unloaded (e.g. the script of a
+    // closed pin) the new number can belong to a script that is still loaded.
+    // The call then reaches that script and this one never runs. Scripting
+    // start runs every loaded script that isn't running yet; KWin calls it
+    // itself whenever its configuration changes.
+    bus.call(QDBusMessage::createMethodCall(
+      QStringLiteral("org.kde.KWin"),
+      QStringLiteral("/Scripting"),
+      QStringLiteral("org.kde.kwin.Scripting"),
+      QStringLiteral("start")));
 #endif
 }
 
@@ -425,6 +432,10 @@ void PinWidget::unloadKWinScript()
     unload << m_kwinScriptName;
     QDBusConnection::sessionBus().call(unload);
     m_kwinScriptName.clear();
+    // KWin reads the file in the background some time after start, so it is
+    // kept as long as the script is loaded
+    QFile::remove(m_kwinScriptPath);
+    m_kwinScriptPath.clear();
 #endif
 }
 
