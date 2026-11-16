@@ -5,6 +5,7 @@
 
 #include <QPoint>
 #include <QPointF>
+#include <QString>
 #include <QWidget>
 
 class QLabel;
@@ -20,6 +21,7 @@ public:
     explicit PinWidget(const QPixmap& pixmap,
                        const QRect& geometry,
                        QWidget* parent = nullptr);
+    ~PinWidget() override;
 
 protected:
     void mousePressEvent(QMouseEvent*) override;
@@ -40,6 +42,7 @@ private:
     void pinchTriggered(QPinchGesture*);
     void closePin();
     void placeWithKWin();
+    void unloadKWinScript();
 
     void rotateLeft();
     void rotateRight();
@@ -65,6 +68,10 @@ private:
     // Left button pressed, a system move starts once the mouse moves
     bool m_movePending{ false };
     QPointF m_pressPosition;
+    // Name of the KWin script managing this pin, empty if there is none
+    QString m_kwinScriptName;
+    // The KWin script is dragging the pin
+    bool m_kwinMoving{ false };
 
 private slots:
     void showContextMenu(const QPoint& pos);

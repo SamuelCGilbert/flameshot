@@ -35,6 +35,9 @@ constexpr int MARGIN = 7;
 constexpr int BLUR_RADIUS = 2 * MARGIN;
 constexpr qreal STEP = 0.03;
 constexpr qreal MIN_SIZE = 100.0;
+// The title tells the KWin script of a pin whether a drag is going on
+const QString PIN_TITLE = QStringLiteral("flameshot-pin");
+const QString PIN_DRAG_TITLE = QStringLiteral("flameshot-pin-drag %1 %2");
 }
 
 PinWidget::PinWidget(const QPixmap& pixmap,
@@ -52,7 +55,7 @@ PinWidget::PinWidget(const QPixmap& pixmap,
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle("flameshot-pin");
+    setWindowTitle(PIN_TITLE);
     ConfigHandler conf;
     m_baseColor = conf.uiColor();
     m_hoverColor = conf.contrastUiColor();
@@ -112,6 +115,11 @@ PinWidget::PinWidget(const QPixmap& pixmap,
             &PinWidget::showContextMenu);
 }
 
+PinWidget::~PinWidget()
+{
+    unloadKWinScript();
+}
+
 void PinWidget::closePin()
 {
     update();
@@ -167,7 +175,7 @@ void PinWidget::mousePressEvent(QMouseEvent* e)
     // swallows clicks and double clicks. Start it once the mouse moves.
     if (e->button() == Qt::LeftButton) {
         m_movePending = true;
-        m_pressPosition = e->globalPosition();
+        m_pressPosition = e->position();
     }
 }
 
@@ -176,11 +184,19 @@ void PinWidget::mouseMoveEvent(QMouseEvent* e)
     if (!m_movePending || !(e->buttons() & Qt::LeftButton)) {
         return;
     }
-    const QPointF distance = e->globalPosition() - m_pressPosition;
+    const QPointF distance = e->position() - m_pressPosition;
     if (distance.manhattanLength() < QApplication::startDragDistance()) {
         return;
     }
     m_movePending = false;
+    if (!m_kwinScriptName.isEmpty()) {
+        // A system move on KWin always keeps 100 pixels of the window on
+        // screen, the script has no such limit and can park a pin off screen.
+        m_kwinMoving = true;
+        setWindowTitle(PIN_DRAG_TITLE.arg(qRound(m_pressPosition.x()))
+                         .arg(qRound(m_pressPosition.y())));
+        return;
+    }
     if (QWindow* window = windowHandle(); window != nullptr) {
         window->startSystemMove();
     }
@@ -190,6 +206,10 @@ void PinWidget::mouseReleaseEvent(QMouseEvent* e)
 {
     if (e->button() == Qt::LeftButton) {
         m_movePending = false;
+        if (m_kwinMoving) {
+            m_kwinMoving = false;
+            setWindowTitle(PIN_TITLE);
+        }
     }
 }
 
@@ -214,14 +234,23 @@ void PinWidget::showEvent(QShowEvent* event)
 }
 
 /**
- * @brief Place the pin where the capture was taken on KDE Plasma (Wayland).
+ * @brief Manage the pin's window through KWin on KDE Plasma (Wayland).
  *
  * Wayland clients can't position their own windows or keep them above the
  * others, so the pin would end up wherever the compositor puts new windows.
  * KWin can do it through its scripting API, so a short script is loaded over
- * D-Bus that moves the new pin window and keeps it above.
+ * D-Bus for as long as the pin exists. It moves the new pin window to where
+ * the capture was taken and keeps it above.
  * Placed pins are marked by keepAbove, which tells new pins apart from the
  * existing ones of this process.
+ *
+ * The script also drags the pin, because KWin keeps 100 pixels of a window on
+ * screen in a system move and pulls it back to that limit on the next commit
+ * (e.g. when it loses focus), which makes it impossible to park a pin mostly
+ * off screen. Moves made by a script aren't limited, so the script follows the
+ * cursor during a drag and undoes KWin pulling a parked pin back. A script
+ * can't be called from outside, so the pin starts and stops the drag through
+ * its window title.
  */
 void PinWidget::placeWithKWin()
 {
@@ -243,19 +272,75 @@ void PinWidget::placeWithKWin()
     const QString path = QDir(dir).filePath(pluginName + QStringLiteral(".js"));
 
     const QString script = QStringLiteral(R"((function () {
-    const PID = %1, X = %2, Y = %3, W = %4, H = %5;
+    const PID = %1;
+    let X = %2, Y = %3, W = %4, H = %5;
+    let pin = null;
+    // Where the pin is held during a drag, relative to its top left corner
+    let grab = null;
     function matches(w) {
         const g = w.frameGeometry;
-        return w.pid === PID && w.caption === "flameshot-pin" && !w.keepAbove &&
-               Math.abs(g.width - W) < 2 && Math.abs(g.height - H) < 2;
+        return !pin && w.pid === PID && w.caption === "flameshot-pin" &&
+               !w.keepAbove && Math.abs(g.width - W) < 2 &&
+               Math.abs(g.height - H) < 2;
+    }
+    function moveTo(x, y) {
+        const g = pin.frameGeometry;
+        pin.frameGeometry = { x: x, y: y, width: g.width, height: g.height };
+    }
+    // Partly outside the screens, but not lost on a screen that went away
+    function isParked() {
+        let onScreen = false;
+        for (const screen of workspace.screens) {
+            const s = screen.geometry;
+            const left = Math.max(X, s.x), right = Math.min(X + W, s.x + s.width);
+            const top = Math.max(Y, s.y), bottom = Math.min(Y + H, s.y + s.height);
+            if (left < right && top < bottom) {
+                if (right - left >= W && bottom - top >= H) {
+                    return false;
+                }
+                onScreen = true;
+            }
+        }
+        return onScreen;
+    }
+    function onGeometryChanged() {
+        const g = pin.frameGeometry;
+        W = g.width;
+        H = g.height;
+        if (grab || (Math.abs(g.x - X) < 1 && Math.abs(g.y - Y) < 1)) {
+            return;
+        }
+        if (!pin.move && isParked()) {
+            moveTo(X, Y);
+        } else {
+            X = g.x;
+            Y = g.y;
+        }
+    }
+    function follow() {
+        if (pin && grab) {
+            const cursor = workspace.cursorPos;
+            X = cursor.x - grab.x;
+            Y = cursor.y - grab.y;
+            moveTo(X, Y);
+        }
+    }
+    function onCaptionChanged() {
+        const drag = /^flameshot-pin-drag (\d+) (\d+)/.exec(pin.caption);
+        if (drag) {
+            grab = { x: Number(drag[1]), y: Number(drag[2]) };
+            follow();
+        } else if (grab) {
+            grab = null;
+            onGeometryChanged();
+        }
     }
     function place(w) {
-        workspace.windowAdded.disconnect(onAdded);
-        const g = w.frameGeometry;
-        w.frameGeometry = { x: X, y: Y, width: g.width, height: g.height };
+        pin = w;
+        moveTo(X, Y);
         w.keepAbove = true;
         // KWin resets keepAbove right after a new window is set up, so set it
-        // once more. This only lasts while the script is loaded.
+        // once more.
         function keepAbove() {
             if (!w.keepAbove) {
                 w.keepAboveChanged.disconnect(keepAbove);
@@ -263,6 +348,14 @@ void PinWidget::placeWithKWin()
             }
         }
         w.keepAboveChanged.connect(keepAbove);
+        w.frameGeometryChanged.connect(onGeometryChanged);
+        w.captionChanged.connect(onCaptionChanged);
+        // Hiding the pin (e.g. while saving it) destroys its window, the next
+        // one is placed where this one was.
+        w.closed.connect(function () {
+            pin = null;
+            grab = null;
+        });
     }
     function onAdded(w) {
         if (matches(w)) {
@@ -270,6 +363,7 @@ void PinWidget::placeWithKWin()
         }
     }
     workspace.windowAdded.connect(onAdded);
+    workspace.cursorPosChanged.connect(follow);
     const windows = workspace.stackingOrder;
     for (let i = windows.length - 1; i >= 0; --i) {
         if (matches(windows[i])) {
@@ -305,20 +399,32 @@ void PinWidget::placeWithKWin()
           QStringLiteral("/Scripting/Script%1").arg(id.value()),
           QStringLiteral("org.kde.kwin.Script"),
           QStringLiteral("run")));
+        m_kwinScriptName = pluginName;
+        connect(qApp,
+                &QCoreApplication::aboutToQuit,
+                this,
+                &PinWidget::unloadKWinScript);
     }
 
-    // The script only acts on the first matching window, unload it once the
-    // window had time to appear
-    QTimer::singleShot(5000, [pluginName, path]() {
-        QDBusMessage unload = QDBusMessage::createMethodCall(
-          QStringLiteral("org.kde.KWin"),
-          QStringLiteral("/Scripting"),
-          QStringLiteral("org.kde.kwin.Scripting"),
-          QStringLiteral("unloadScript"));
-        unload << pluginName;
-        QDBusConnection::sessionBus().asyncCall(unload);
-        QFile::remove(path);
-    });
+    // KWin reads the file in the background after the call to run
+    QTimer::singleShot(5000, [path]() { QFile::remove(path); });
+#endif
+}
+
+void PinWidget::unloadKWinScript()
+{
+#if !(defined(Q_OS_MACOS) || defined(Q_OS_WIN))
+    if (m_kwinScriptName.isEmpty()) {
+        return;
+    }
+    QDBusMessage unload =
+      QDBusMessage::createMethodCall(QStringLiteral("org.kde.KWin"),
+                                     QStringLiteral("/Scripting"),
+                                     QStringLiteral("org.kde.kwin.Scripting"),
+                                     QStringLiteral("unloadScript"));
+    unload << m_kwinScriptName;
+    QDBusConnection::sessionBus().call(unload);
+    m_kwinScriptName.clear();
 #endif
 }
 
