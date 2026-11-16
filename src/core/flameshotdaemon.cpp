@@ -10,6 +10,11 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QGuiApplication>
+#include <QMimeData>
+#if defined(USE_WAYLAND_CLIPBOARD)
+#include <KSystemClipboard>
+#endif
 #include <QIODevice>
 #include <QPixmap>
 #include <QRect>
@@ -381,7 +386,19 @@ void FlameshotDaemon::attachTextToClipboard(const QString& text,
     // This variable is necessary because the signal doesn't get blocked on
     // windows for some reason
     m_clipboardSignalBlocked = true;
+#if defined(USE_WAYLAND_CLIPBOARD)
+    // On Wayland only the focused client may set the clipboard through Qt;
+    // the daemon has no focused window, KSystemClipboard uses data control.
+    if (QGuiApplication::platformName() == QLatin1String("wayland")) {
+        auto* mimeData = new QMimeData();
+        mimeData->setText(text);
+        KSystemClipboard::instance()->setMimeData(mimeData, QClipboard::Clipboard);
+    } else {
+        clipboard->setText(text);
+    }
+#else
     clipboard->setText(text);
+#endif
     clipboard->blockSignals(false);
 }
 
