@@ -1,3 +1,63 @@
+> [!NOTE]
+> **This is an unofficial fork of Flameshot with fixes for Wayland.**
+> It is not made or supported by the Flameshot developers, so please don't
+> report problems with it to them. For the official Flameshot, go to
+> [flameshot-org/flameshot](https://github.com/flameshot-org/flameshot).
+
+# Flameshot for Wayland (unofficial)
+
+On Wayland, some Flameshot features stop working the way they do on X11:
+pinned screenshots open in the middle of the screen, fall behind other windows
+and can't be dragged freely, and capturing is slow. This fork fixes those
+things. It is based on Flameshot v15.
+
+Most of the fixes need **KDE Plasma 6**, because they use KDE's window manager
+(KWin) for things Wayland doesn't let apps do themselves. On other desktops
+this fork works like normal Flameshot plus the fixes marked "any desktop".
+
+| Fix | Works on |
+| --- | --- |
+| Pinned screenshots open where you captured them and stay on top of other windows | KDE Plasma 6 |
+| Pins can be dragged anywhere, including partly off the edge of the screen to keep them out of the way | KDE Plasma 6 |
+| Faster capture, straight from KWin (about 45 ms instead of 300–400 ms through the screenshot portal) | KDE Plasma 6, other desktops keep using the portal |
+| New setting: close a pin with a double click | Any desktop |
+| The size label shown while you select an area sits outside the selection, so it doesn't cover what you're capturing | Any desktop |
+| Text such as upload links can be copied while Flameshot runs in the background (needs the `USE_WAYLAND_CLIPBOARD` build option) | Wayland desktops with the data-control protocol, such as KDE Plasma, Sway and Hyprland (less tested than the rest) |
+
+Tested on KDE Plasma 6.8 (Wayland) on Ubuntu. These changes were written with
+help from an AI assistant (Claude). They are shared as-is, in case they help
+someone else, with no promise of support.
+
+## Install
+
+There are no ready-made packages yet, so build it from source:
+
+```sh
+git clone -b wayland https://github.com/SamuelCGilbert/flameshot.git
+cd flameshot
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_WAYLAND_CLIPBOARD=ON
+cmake --build build
+sudo cmake --install build
+```
+
+You need the build dependencies listed under [Dependencies](#dependencies)
+below, plus KDE's KGuiAddons for the clipboard option (`libkf6guiaddons-dev`
+on Debian and Ubuntu, `kf6-kguiaddons-devel` on Fedora, `kguiaddons` on Arch).
+Leave out `-DUSE_WAYLAND_CLIPBOARD=ON` if you don't have it.
+
+If Flameshot was already running, quit it from its tray icon and start it
+again, so the new version is used.
+
+## Updates
+
+This fork is updated with new Flameshot releases from time to time, but not
+right away. All changes are on the `wayland` branch; `master` is an unchanged
+copy of the official Flameshot.
+
+---
+
+*The original Flameshot README follows.*
+
 <div align="center">
   <p>
     <h1>
