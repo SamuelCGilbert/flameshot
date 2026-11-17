@@ -321,9 +321,21 @@ void ConfigHandler::setStartupLaunch(const bool start)
 
     QFile file(path + "Flameshot.desktop");
     if (start) {
+        // When running as an AppImage, "flameshot" isn't on the PATH (or is
+        // another install), so start the AppImage file itself
+        QString exec = QStringLiteral("flameshot");
+        QString appImage = qEnvironmentVariable("APPIMAGE");
+        if (!appImage.isEmpty()) {
+            for (const QString& c : { "\"", "`", "$" }) {
+                appImage.replace(c, "\\" + c);
+            }
+            exec = "\"" + appImage.replace("%", "%%") + "\"";
+        }
         if (file.open(QIODevice::WriteOnly)) {
             QByteArray data("[Desktop Entry]\nName=flameshot\nIcon=flameshot"
-                            "\nExec=flameshot\nTerminal=false\nType=Application"
+                            "\nExec=" +
+                            exec.toUtf8() +
+                            "\nTerminal=false\nType=Application"
                             "\nX-GNOME-Autostart-enabled=true\n");
             file.write(data);
         }
