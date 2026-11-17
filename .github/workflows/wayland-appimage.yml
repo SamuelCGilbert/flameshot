@@ -1,0 +1,56 @@
+# Builds the AppImage of this unofficial Wayland fork.
+# Pushing a tag such as v15.0.0-wayland.1 builds it and publishes a release
+# with the AppImage. Running it by hand from the Actions tab only builds it.
+name: AppImage (Wayland fork)
+
+on:
+  push:
+    tags:
+      - 'v*-wayland*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build AppImage
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          packaging/appimage-wayland/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: appimage
+          path: |
+            Flameshot-*-x86_64.AppImage
+            Flameshot-*-x86_64.AppImage.zsync
+            Flameshot-*-x86_64.AppImage.sha256sum
+
+  release:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: appimage
+
+      - name: Create the release and upload the AppImage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --verify-tag --title "Flameshot for Wayland ${TAG#v}" \
+              --notes "AppImage of this unofficial Wayland fork. See the README for what it fixes and how to use it."
+          gh release upload "$TAG" Flameshot-*-x86_64.AppImage* --clobber

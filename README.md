@@ -30,7 +30,33 @@ someone else, with no promise of support.
 
 ## Install
 
-There are no ready-made packages yet, so build it from source:
+### AppImage
+
+Download `Flameshot-…-x86_64.AppImage` from the
+[latest release](https://github.com/SamuelCGilbert/flameshot/releases/latest),
+make it executable and run it:
+
+```sh
+chmod +x Flameshot-*-x86_64.AppImage
+./Flameshot-*-x86_64.AppImage
+```
+
+If the official Flameshot is installed too, quit it first (from its tray
+icon), because only one Flameshot can run at a time. To start this one when
+you log in, turn on "Launch at startup" in its settings.
+
+Differences from building it yourself:
+
+- Capture goes through the screenshot portal instead of straight from KWin, so
+  it's slower. KDE only allows the fast way for apps installed with a desktop
+  file, and an AppImage runs from a different place each time.
+- The clipboard option below isn't included, and neither is Imgur upload.
+- It looks like plain Qt instead of your KDE theme.
+
+The AppImage can update itself with tools such as
+[Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) or AppImageUpdate.
+
+### Build from source
 
 ```sh
 git clone -b wayland https://github.com/SamuelCGilbert/flameshot.git
